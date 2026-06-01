@@ -12,51 +12,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./style.css">
   <title>아버지 약 관리</title>
-
-  <!-- OneSignal 푸시 알림 SDK -->
-  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
-  <script>
-    window.OneSignalDeferred = window.OneSignalDeferred || [];
-    OneSignalDeferred.push(async function(OneSignal) {
-      // ★ OneSignal App ID를 여기에 입력하세요
-      const ONESIGNAL_APP_ID = 'YOUR_ONESIGNAL_APP_ID';
-      if (ONESIGNAL_APP_ID === 'YOUR_ONESIGNAL_APP_ID') return; // 미설정 시 건너뜀
-
-      await OneSignal.init({
-        appId: ONESIGNAL_APP_ID,
-        serviceWorkerPath: 'OneSignalSDKWorker.js',
-        serviceWorkerParam: { scope: './' },
-        notifyButton: { enable: false },
-        welcomeNotification: {
-          title: '💊 아버지 약 관리',
-          message: '약 알림이 설정되었어요!'
-        }
-      });
-
-      // 알림 권한 요청 (앱 첫 실행 시)
-      const permission = await OneSignal.Notifications.permission;
-      if (!permission) {
-        await OneSignal.Notifications.requestPermission();
-      }
-
-      // Player ID 저장 → app.js 에서 사용
-      const playerId = await OneSignal.User.PushSubscription.id;
-      if (playerId) {
-        window._oneSignalPlayerId = playerId;
-        // 기존에 저장된 약 스케줄을 서버에 동기화
-        if (window.syncScheduleToServer) window.syncScheduleToServer(playerId);
-      }
-
-      // 구독 상태 변경 감지
-      OneSignal.User.PushSubscription.addEventListener('change', async (e) => {
-        const id = e.current?.id;
-        if (id) {
-          window._oneSignalPlayerId = id;
-          if (window.syncScheduleToServer) window.syncScheduleToServer(id);
-        }
-      });
-    });
-  </script>
 </head>
 <body>
 
@@ -76,17 +31,12 @@
     <div class="header-date" id="headerDate"></div>
   </header>
 
-  <!-- ===== 탭 ===== -->
+  <!-- ===== 탭 (4개) ===== -->
   <nav class="tabs">
-    <button class="tab-btn active" id="tab_today" onclick="switchTab('today')">
-      📋 오늘 약
-    </button>
-    <button class="tab-btn" id="tab_settings" onclick="switchTab('settings')">
-      ⚙️ 약 설정
-    </button>
-    <button class="tab-btn" id="tab_records" onclick="switchTab('records')">
-      📊 복용 기록
-    </button>
+    <button class="tab-btn active" id="tab_today"    onclick="switchTab('today')">📋 오늘 약</button>
+    <button class="tab-btn"        id="tab_settings" onclick="switchTab('settings')">⚙️ 약 설정</button>
+    <button class="tab-btn"        id="tab_alarm"    onclick="switchTab('alarm')">🔔 알람</button>
+    <button class="tab-btn"        id="tab_records"  onclick="switchTab('records')">📊 기록</button>
   </nav>
 
   <!-- ===== 오늘 약 탭 ===== -->
@@ -101,6 +51,43 @@
       <button class="add-btn" onclick="openAddModal()">➕ 약 추가</button>
     </div>
     <div id="settingsContainer"></div>
+  </section>
+
+  <!-- ===== 알람 설정 탭 ===== -->
+  <section class="tab-content" id="content_alarm">
+    <div style="padding:4px 0 16px;">
+      <div id="alarmSetupStatus" style="margin-bottom:16px;padding:16px 18px;background:#fff;border-radius:16px;box-shadow:0 2px 8px rgba(0,0,0,.12);font-size:1rem;">
+        ❌ 아직 알람 설정이 안 됐어요
+      </div>
+
+      <!-- 안내 박스 -->
+      <div style="background:#e8f5e9;border-radius:16px;padding:18px;margin-bottom:16px;font-size:0.95rem;line-height:1.7;">
+        <strong>📌 한 번만 설정하면 끝!</strong><br>
+        화면이 꺼져도, 앱을 닫아도 알람이 옵니다.<br><br>
+        <strong>GitHub 토큰 만들기 (2분)</strong><br>
+        1️⃣ <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" style="color:#2e7d32;font-weight:700;">github.com → 토큰 발급 페이지</a> 접속<br>
+        2️⃣ Token name: <code>아버지약</code><br>
+        3️⃣ Repository access: <strong>Only select repositories → father</strong><br>
+        4️⃣ Permissions → Contents: <strong>Read and write</strong><br>
+        5️⃣ Generate token → 복사 → 아래에 붙여넣기
+      </div>
+
+      <!-- 토큰 입력 -->
+      <div class="form-group">
+        <label class="form-label" for="githubToken">🔑 GitHub 토큰</label>
+        <input class="form-input" type="password" id="githubToken"
+               placeholder="github_pat_xxxx... 붙여넣기">
+      </div>
+
+      <button class="btn-save" style="width:100%;padding:18px;font-size:1.1rem;border-radius:14px;"
+              onclick="saveAlarmSetup()">
+        🔔 알람 설정하기
+      </button>
+
+      <p style="text-align:center;margin-top:14px;font-size:0.88rem;color:#757575;">
+        토큰은 이 기기에만 저장되며 외부로 전송되지 않습니다
+      </p>
+    </div>
   </section>
 
   <!-- ===== 복용 기록 탭 ===== -->
@@ -120,11 +107,8 @@
 
       <div class="form-group">
         <label class="form-label">복용 시간대 * (여러 개 선택 가능)</label>
-
-        <!-- 아침 -->
         <label style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #eee;cursor:pointer;">
-          <input type="checkbox" id="cb_morning" onchange="onTimeCheck('morning')"
-                 style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
+          <input type="checkbox" id="cb_morning" onchange="onTimeCheck('morning')" style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
           <span style="font-size:1.05rem;">☀️ 아침</span>
         </label>
         <div class="form-row" id="alarmRow_morning" style="display:none;padding:8px 0 4px 32px;">
@@ -134,10 +118,8 @@
           </div>
         </div>
 
-        <!-- 점심 -->
         <label style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #eee;cursor:pointer;">
-          <input type="checkbox" id="cb_lunch" onchange="onTimeCheck('lunch')"
-                 style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
+          <input type="checkbox" id="cb_lunch" onchange="onTimeCheck('lunch')" style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
           <span style="font-size:1.05rem;">🌤️ 점심</span>
         </label>
         <div class="form-row" id="alarmRow_lunch" style="display:none;padding:8px 0 4px 32px;">
@@ -147,10 +129,8 @@
           </div>
         </div>
 
-        <!-- 저녁 -->
         <label style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #eee;cursor:pointer;">
-          <input type="checkbox" id="cb_dinner" onchange="onTimeCheck('dinner')"
-                 style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
+          <input type="checkbox" id="cb_dinner" onchange="onTimeCheck('dinner')" style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
           <span style="font-size:1.05rem;">🌙 저녁</span>
         </label>
         <div class="form-row" id="alarmRow_dinner" style="display:none;padding:8px 0 4px 32px;">
@@ -160,10 +140,8 @@
           </div>
         </div>
 
-        <!-- 취침 전 -->
         <label style="display:flex;align-items:center;gap:10px;padding:12px 0;cursor:pointer;">
-          <input type="checkbox" id="cb_sleep" onchange="onTimeCheck('sleep')"
-                 style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
+          <input type="checkbox" id="cb_sleep" onchange="onTimeCheck('sleep')" style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
           <span style="font-size:1.05rem;">😴 취침 전</span>
         </label>
         <div class="form-row" id="alarmRow_sleep" style="display:none;padding:8px 0 4px 32px;">
@@ -193,7 +171,7 @@
       <div class="confirm-title">정말 삭제할까요?</div>
       <div class="confirm-sub"><strong id="confirmMedName"></strong> 약을 삭제하면<br>복용 기록도 함께 지워져요.</div>
       <div class="confirm-btns">
-        <button class="confirm-no" onclick="closeConfirm()">아니요</button>
+        <button class="confirm-no"  onclick="closeConfirm()">아니요</button>
         <button class="confirm-yes" onclick="doDelete()">네, 삭제해요</button>
       </div>
     </div>

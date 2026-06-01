@@ -1,33 +1,29 @@
+// ==================== 설정 ====================
+const VAPID_PUBLIC_KEY = 'BNuEAuNgIkzajN84NKpVKYKdHhVJZ0E9dgPPFPjbOqfYy7DJDysTUmlZ2vFTAaFmi4dGdNp4ZJ5LZONod7dCJ38';
+const GITHUB_REPO     = 'yamugyclaude/father';   // GitHub 저장소
+const SCHEDULE_PATH   = 'schedule.json';           // 저장 경로
+
 // ==================== 데이터 구조 ====================
-// medication: { id, name, times: ['morning'|'lunch'|'dinner'|'sleep'], alarmTime: 'HH:MM', memo, active }
-// record: { date: 'YYYY-MM-DD', entries: { medId_time: { taken: bool, takenAt: 'HH:MM' } } }
-
-// ★ Cloudflare Worker URL을 여기에 입력하세요 (배포 후)
-const WORKER_URL = 'YOUR_CLOUDFLARE_WORKER_URL';
-
 const TIME_LABELS = {
-  morning: { label: '아침', icon: '☀️', defaultTime: '08:00' },
-  lunch:   { label: '점심', icon: '🌤️', defaultTime: '12:00' },
-  dinner:  { label: '저녁', icon: '🌙', defaultTime: '18:00' },
-  sleep:   { label: '취침 전', icon: '😴', defaultTime: '21:00' }
+  morning: { label: '아침',    icon: '☀️',  defaultTime: '08:00' },
+  lunch:   { label: '점심',    icon: '🌤️', defaultTime: '12:00' },
+  dinner:  { label: '저녁',    icon: '🌙',  defaultTime: '18:00' },
+  sleep:   { label: '취침 전', icon: '😴',  defaultTime: '21:00' }
 };
-
 const TIME_ORDER = ['morning', 'lunch', 'dinner', 'sleep'];
 
 // ==================== 상태 ====================
-let medications = [];
-let records = {};
-let editingId = null;
+let medications    = [];
+let records        = {};
+let editingId      = null;
 let deleteTargetId = null;
 let alarmCheckInterval = null;
-let snoozeTimeout = null;
+let snoozeTimeout  = null;
 
-// Notification API가 없는 브라우저 대비 안전 처리
 function getNotifPermission() {
   try { return (typeof Notification !== 'undefined') ? Notification.permission : 'denied'; }
-  catch (e) { return 'denied'; }
+  catch { return 'denied'; }
 }
-let notifPermission = getNotifPermission();
 
 // ==================== 초기화 ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -39,19 +35,171 @@ document.addEventListener('DOMContentLoaded', () => {
   setInterval(updateDateDisplay, 60000);
   checkMidnightReset();
 
-  // Service Worker 메시지 수신
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.addEventListener('message', e => {
-      if (e.data.type === 'SNOOZE') scheduleSnooze();
-    });
+  // 알람 설정 탭 — 저장된 토큰 표시
+  const savedToken = localStorage.getItem('github_token');
+  if (savedToken) {
+    document.getElementById('githubToken').value = '●'.repeat(20);
+    updateAlarmSetupStatus(true);
   }
 });
 
 // ==================== Service Worker ====================
-function registerSW() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(() => {});
+async function registerSW() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+    console.log('[SW] 등록 완료');
+
+    // 기존 구독 확인
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      window._pushSubscription = sub;
+      console.log('[SW] 기존 Push 구독 있음');
+    }
+  } catch (e) {
+    console.warn('[SW] 등록 실패:', e.message);
   }
+}
+
+// ==================== Push 구독 ====================
+async function subscribePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    showToast('이 브라우저는 Push 알림을 지원하지 않아요', 'red');
+    return null;
+  }
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+
+    // 알림 권한 요청
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      showToast('알림 권한이 필요해요', 'red');
+      return null;
+    }
+
+    // 기존 구독 해제 후 재구독
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) await existing.unsubscribe();
+
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly:      true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+
+    window._pushSubscription = sub;
+    console.log('[Push] 구독 완료');
+    return sub;
+  } catch (e) {
+    console.error('[Push] 구독 실패:', e.message);
+    showToast('알림 설정에 실패했어요: ' + e.message, 'red');
+    return null;
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding  = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64   = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData  = atob(base64);
+  return Uint8Array.from([...rawData].map(c => c.charCodeAt(0)));
+}
+
+// ==================== GitHub API 동기화 ====================
+async function syncToGitHub() {
+  const token = localStorage.getItem('github_token');
+  if (!token) return false;
+
+  const sub = window._pushSubscription;
+  const payload = JSON.stringify({
+    subscription: sub ? sub.toJSON() : null,
+    medications:  medications
+  }, null, 2);
+
+  try {
+    // 현재 파일 SHA 조회 (업데이트에 필요)
+    const getRes = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/contents/${SCHEDULE_PATH}`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } }
+    );
+    let sha = undefined;
+    if (getRes.ok) {
+      const data = await getRes.json();
+      sha = data.sha;
+    }
+
+    // 파일 업데이트(또는 생성)
+    const body = {
+      message: '약 스케줄 업데이트 🔄',
+      content: btoa(unescape(encodeURIComponent(payload)))
+    };
+    if (sha) body.sha = sha;
+
+    const putRes = await fetch(
+      `https://api.github.com/repos/${GITHUB_REPO}/contents/${SCHEDULE_PATH}`,
+      {
+        method:  'PUT',
+        headers: {
+          Authorization:  `Bearer ${token}`,
+          Accept:         'application/vnd.github+json',
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body)
+      }
+    );
+
+    if (putRes.ok) {
+      console.log('[GitHub] schedule.json 동기화 완료');
+      return true;
+    } else {
+      const err = await putRes.json();
+      console.error('[GitHub] 동기화 실패:', err.message);
+      return false;
+    }
+  } catch (e) {
+    console.error('[GitHub] 네트워크 오류:', e.message);
+    return false;
+  }
+}
+
+// ==================== 알람 설정 저장 ====================
+async function saveAlarmSetup() {
+  const tokenInput = document.getElementById('githubToken').value.trim();
+
+  // 새 토큰 입력된 경우만 저장 (●●● 표시는 기존 토큰)
+  if (tokenInput && !tokenInput.startsWith('●')) {
+    localStorage.setItem('github_token', tokenInput);
+    document.getElementById('githubToken').value = '●'.repeat(20);
+  }
+
+  const token = localStorage.getItem('github_token');
+  if (!token) {
+    showToast('GitHub 토큰을 먼저 입력해 주세요', 'red');
+    return;
+  }
+
+  showToast('⏳ 알람 설정 중...', '');
+
+  // Push 구독
+  const sub = await subscribePush();
+  if (!sub) return;
+
+  // GitHub 동기화
+  const ok = await syncToGitHub();
+  if (ok) {
+    updateAlarmSetupStatus(true);
+    showToast('✅ 알람 설정 완료! 이제 화면이 꺼져도 알림이 와요', 'green');
+  } else {
+    showToast('❌ GitHub 연동 실패. 토큰을 확인해 주세요', 'red');
+    updateAlarmSetupStatus(false);
+  }
+}
+
+function updateAlarmSetupStatus(connected) {
+  const el = document.getElementById('alarmSetupStatus');
+  if (!el) return;
+  el.innerHTML = connected
+    ? '<span style="color:#2e7d32;font-weight:700;">✅ 알람 연결됨 — 화면이 꺼져도 알림이 와요</span>'
+    : '<span style="color:#c62828;font-weight:700;">❌ 아직 알람 설정이 안 됐어요</span>';
 }
 
 // ==================== 날짜 ====================
@@ -61,22 +209,18 @@ function todayStr() {
 }
 
 function updateDateDisplay() {
-  const d = new Date();
+  const d    = new Date();
   const days = ['일','월','화','수','목','금','토'];
-  const str = `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 (${days[d.getDay()]})`;
-  document.getElementById('headerDate').textContent = str;
+  document.getElementById('headerDate').textContent =
+    `${d.getFullYear()}년 ${d.getMonth()+1}월 ${d.getDate()}일 (${days[d.getDay()]})`;
 }
 
 function checkMidnightReset() {
-  const now = new Date();
+  const now      = new Date();
   const tomorrow = new Date(now);
   tomorrow.setDate(tomorrow.getDate() + 1);
   tomorrow.setHours(0, 0, 10, 0);
-  const msUntilMidnight = tomorrow - now;
-  setTimeout(() => {
-    renderTodayTab();
-    checkMidnightReset();
-  }, msUntilMidnight);
+  setTimeout(() => { renderTodayTab(); checkMidnightReset(); }, tomorrow - now);
 }
 
 // ==================== 로컬 스토리지 ====================
@@ -85,33 +229,15 @@ function saveData() {
   localStorage.setItem('aboji_records', JSON.stringify(records));
 }
 
-// ==================== 서버 동기화 (Cloudflare Worker) ====================
-async function syncScheduleToServer(playerId) {
-  if (!playerId) return;
-  if (WORKER_URL === 'YOUR_CLOUDFLARE_WORKER_URL') return; // 미설정 시 건너뜀
-  try {
-    await fetch(`${WORKER_URL}/schedule`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ playerId, medications })
-    });
-    console.log('[동기화] 약 스케줄 서버 전송 완료');
-  } catch (e) {
-    console.warn('[동기화 실패]', e.message);
-  }
-}
-// index.html 의 OneSignal 콜백에서 호출 가능하도록 전역 노출
-window.syncScheduleToServer = syncScheduleToServer;
-
 function loadData() {
   try {
     const m = localStorage.getItem('aboji_meds');
     const r = localStorage.getItem('aboji_records');
     medications = m ? JSON.parse(m) : getDefaultMedications();
-    records = r ? JSON.parse(r) : {};
+    records     = r ? JSON.parse(r) : {};
   } catch {
     medications = getDefaultMedications();
-    records = {};
+    records     = {};
   }
   if (!records[todayStr()]) records[todayStr()] = {};
 }
@@ -131,17 +257,17 @@ function uid() {
 function renderAll() {
   renderTodayTab();
   renderSettingsTab();
+  renderAlarmTab();
   renderRecordsTab();
 }
 
 // ---- 오늘 약 탭 ----
 function renderTodayTab() {
   const container = document.getElementById('todayContainer');
-  const today = todayStr();
+  const today     = todayStr();
   if (!records[today]) records[today] = {};
 
   const activeMeds = medications.filter(m => m.active);
-
   if (activeMeds.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
@@ -151,32 +277,19 @@ function renderTodayTab() {
     return;
   }
 
-  // 알림 권한 배너
-  let notifHtml = '';
-  if (getNotifPermission() === 'default') {
-    notifHtml = `
-      <div class="notif-banner">
-        <div class="notif-banner-text">🔔 알람을 받으려면 알림 허용이 필요해요</div>
-        <button class="notif-banner-btn" onclick="requestNotifPermission()">허용하기</button>
-      </div>`;
-  }
-
-  // 시간대별 그룹핑
-  let html = notifHtml;
-
+  let html = '';
   TIME_ORDER.forEach(timeKey => {
     const medsForTime = activeMeds.filter(m => m.times.includes(timeKey));
     if (medsForTime.length === 0) return;
 
-    const info = TIME_LABELS[timeKey];
+    const info      = TIME_LABELS[timeKey];
     const alarmTime = medsForTime[0].alarmTimes?.[timeKey] || info.defaultTime;
 
-    let cardsHtml = medsForTime.map(med => {
-      const key = `${med.id}_${timeKey}`;
-      const entry = records[today][key] || {};
-      const taken = entry.taken || false;
+    const cardsHtml = medsForTime.map(med => {
+      const key    = `${med.id}_${timeKey}`;
+      const entry  = records[today][key] || {};
+      const taken  = entry.taken  || false;
       const takenAt = entry.takenAt || '';
-
       return `
         <div class="med-card ${taken ? 'taken' : ''}" id="card_${key}">
           <div class="med-info">
@@ -208,16 +321,15 @@ function renderTodayTab() {
 function toggleTaken(medId, timeKey) {
   const today = todayStr();
   if (!records[today]) records[today] = {};
-  const key = `${medId}_${timeKey}`;
+  const key   = `${medId}_${timeKey}`;
   const entry = records[today][key] || {};
   const wasTaken = entry.taken || false;
 
   if (wasTaken) {
-    // 취소 처리
     records[today][key] = { taken: false, takenAt: '' };
     showToast('복용 취소했어요', 'red');
   } else {
-    const now = new Date();
+    const now  = new Date();
     const time = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
     records[today][key] = { taken: true, takenAt: time };
     showToast('✅ 약을 드셨군요! 잘하셨어요!', 'green');
@@ -228,7 +340,7 @@ function toggleTaken(medId, timeKey) {
   renderRecordsTab();
 }
 
-// ---- 설정 탭 ----
+// ---- 약 설정 탭 ----
 function renderSettingsTab() {
   const container = document.getElementById('settingsContainer');
   if (medications.length === 0) {
@@ -241,8 +353,8 @@ function renderSettingsTab() {
   }
 
   container.innerHTML = medications.map(med => {
-    const timeLabels = med.times.map(t => TIME_LABELS[t].label).join(', ');
-    const alarmTimes = med.times.map(t => med.alarmTimes?.[t] || TIME_LABELS[t].defaultTime).join(' / ');
+    const timeLabels  = med.times.map(t => TIME_LABELS[t].label).join(', ');
+    const alarmTimes  = med.times.map(t => med.alarmTimes?.[t] || TIME_LABELS[t].defaultTime).join(' / ');
     return `
       <div class="settings-med-card">
         <div class="settings-med-header">
@@ -252,7 +364,7 @@ function renderSettingsTab() {
             ${med.memo ? `<div class="settings-med-detail">📝 ${escHtml(med.memo)}</div>` : ''}
           </div>
           <div class="settings-actions">
-            <button class="edit-btn" onclick="openEditModal('${med.id}')">✏️ 수정</button>
+            <button class="edit-btn"   onclick="openEditModal('${med.id}')">✏️ 수정</button>
             <button class="delete-btn" onclick="confirmDelete('${med.id}')">🗑️ 삭제</button>
           </div>
         </div>
@@ -260,17 +372,27 @@ function renderSettingsTab() {
   }).join('');
 }
 
+// ---- 알람 설정 탭 ----
+function renderAlarmTab() {
+  const token     = localStorage.getItem('github_token');
+  const connected = !!token && !!window._pushSubscription;
+  const statusHtml = connected
+    ? '<span style="color:#2e7d32;font-weight:700;">✅ 알람 연결됨 — 화면이 꺼져도 알림이 와요</span>'
+    : '<span style="color:#c62828;font-weight:700;">❌ 아직 설정 안 됨</span>';
+
+  document.getElementById('alarmSetupStatus').innerHTML = statusHtml;
+}
+
 // ---- 기록 탭 ----
 function renderRecordsTab() {
   const container = document.getElementById('recordsContainer');
-  const dates = Object.keys(records).sort().reverse();
+  const dates     = Object.keys(records).sort().reverse();
 
   if (dates.length === 0) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><p>아직 기록이 없어요.</p></div>`;
     return;
   }
 
-  // 통계
   let totalEntries = 0, takenEntries = 0;
   const last7 = dates.slice(0, 7);
   last7.forEach(date => {
@@ -307,16 +429,16 @@ function renderRecordsTab() {
     const dayRate = total > 0 ? Math.round(taken / total * 100) : 0;
 
     const [y, mo, d] = date.split('-');
-    const dateObj = new Date(+y, +mo-1, +d);
-    const days = ['일','월','화','수','목','금','토'];
+    const dateObj   = new Date(+y, +mo-1, +d);
+    const days      = ['일','월','화','수','목','금','토'];
     const dateLabel = `${mo}월 ${d}일 (${days[dateObj.getDay()]})`;
 
     const items = keys.map(key => {
       const [medId, timeKey] = key.split('_');
-      const med = medications.find(m => m.id === medId);
+      const med     = medications.find(m => m.id === medId);
       const medName = med ? med.name : '(삭제된 약)';
       const timeLabel = TIME_LABELS[timeKey]?.label || timeKey;
-      const entry = dayRecords[key];
+      const entry   = dayRecords[key];
       return `
         <div class="record-item">
           <div class="record-item-dot ${entry.taken ? 'taken' : 'missed'}"></div>
@@ -370,20 +492,15 @@ function openEditModal(id) {
   openModal();
 }
 
-function openModal() {
-  document.getElementById('modalOverlay').classList.add('open');
-}
-
-function closeModal() {
-  document.getElementById('modalOverlay').classList.remove('open');
-}
+function openModal()  { document.getElementById('modalOverlay').classList.add('open'); }
+function closeModal() { document.getElementById('modalOverlay').classList.remove('open'); }
 
 function onTimeCheck(timeKey) {
   const checked = document.getElementById(`cb_${timeKey}`).checked;
   document.getElementById(`alarmRow_${timeKey}`).style.display = checked ? 'flex' : 'none';
 }
 
-function saveMed() {
+async function saveMed() {
   const name = document.getElementById('medName').value.trim();
   if (!name) { showToast('약 이름을 입력해 주세요', 'red'); return; }
 
@@ -399,9 +516,7 @@ function saveMed() {
 
   if (editingId) {
     const idx = medications.findIndex(m => m.id === editingId);
-    if (idx !== -1) {
-      medications[idx] = { ...medications[idx], name, times, alarmTimes, memo };
-    }
+    if (idx !== -1) medications[idx] = { ...medications[idx], name, times, alarmTimes, memo };
     showToast('✅ 수정했어요', 'green');
   } else {
     medications.push({ id: uid(), name, times, alarmTimes, memo, active: true });
@@ -409,12 +524,16 @@ function saveMed() {
   }
 
   saveData();
-  if (window._oneSignalPlayerId) syncScheduleToServer(window._oneSignalPlayerId);
   closeModal();
   renderAll();
+
+  // GitHub 동기화 (백그라운드)
+  syncToGitHub().then(ok => {
+    if (ok) console.log('[동기화] 완료');
+  });
 }
 
-// ==================== 삭제 확인 ====================
+// ==================== 삭제 ====================
 function confirmDelete(id) {
   const med = medications.find(m => m.id === id);
   if (!med) return;
@@ -428,17 +547,17 @@ function closeConfirm() {
   deleteTargetId = null;
 }
 
-function doDelete() {
+async function doDelete() {
   if (!deleteTargetId) return;
   medications = medications.filter(m => m.id !== deleteTargetId);
   saveData();
-  if (window._oneSignalPlayerId) syncScheduleToServer(window._oneSignalPlayerId);
   closeConfirm();
   renderAll();
   showToast('🗑️ 삭제했어요', 'red');
+  syncToGitHub();
 }
 
-// ==================== 알람 엔진 ====================
+// ==================== 인앱 알람 엔진 (앱 열려있을 때) ====================
 function startAlarmEngine() {
   if (alarmCheckInterval) clearInterval(alarmCheckInterval);
   alarmCheckInterval = setInterval(checkAlarms, 30000);
@@ -446,8 +565,8 @@ function startAlarmEngine() {
 }
 
 function checkAlarms() {
-  const now = new Date();
-  const hhmm = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const now   = new Date();
+  const hhmm  = `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
   const today = todayStr();
   if (!records[today]) records[today] = {};
 
@@ -455,38 +574,24 @@ function checkAlarms() {
     med.times.forEach(timeKey => {
       const alarmTime = med.alarmTimes?.[timeKey] || TIME_LABELS[timeKey].defaultTime;
       if (alarmTime === hhmm) {
-        const key = `${med.id}_${timeKey}`;
+        const key   = `${med.id}_${timeKey}`;
         const entry = records[today][key] || {};
         if (!entry.taken) {
-          triggerAlarm(med.name, TIME_LABELS[timeKey].label);
+          triggerInAppAlarm(med.name, TIME_LABELS[timeKey].label);
         }
       }
     });
   });
 }
 
-function triggerAlarm(medName, timeLabel) {
-  // 인앱 배너
+function triggerInAppAlarm(medName, timeLabel) {
   showAlarmBanner(`💊 ${timeLabel} 약을 드실 시간이에요!`, medName);
-
-  // 소리
   playAlarmSound();
 
-  // 시스템 알림
-  if (getNotifPermission() === 'granted') {
-    const notif = new Notification('💊 약 드실 시간이에요!', {
-      body: `${timeLabel} — ${medName}`,
-      icon: './icon-192.png',
-      vibrate: [300, 100, 300]
-    });
-    notif.onclick = () => { window.focus(); notif.close(); };
-    setTimeout(() => notif.close(), 15000);
-  }
-
-  // Service Worker 알림 (백그라운드)
+  // SW 통해 알림 표시
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     navigator.serviceWorker.controller.postMessage({
-      type: 'ALARM',
+      type: 'IN_APP_ALARM',
       body: `${timeLabel} — ${medName}`
     });
   }
@@ -495,29 +600,23 @@ function triggerAlarm(medName, timeLabel) {
 function playAlarmSound() {
   try {
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const playBeep = (freq, start, duration) => {
-      const osc = ctx.createOscillator();
+    [[880,0],[1100,.35],[880,.7]].forEach(([freq,start]) => {
+      const osc  = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = freq;
-      osc.type = 'sine';
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = freq; osc.type = 'sine';
       gain.gain.setValueAtTime(0.3, ctx.currentTime + start);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + duration);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + start + 0.3);
       osc.start(ctx.currentTime + start);
-      osc.stop(ctx.currentTime + start + duration);
-    };
-    playBeep(880, 0, 0.3);
-    playBeep(1100, 0.35, 0.3);
-    playBeep(880, 0.7, 0.3);
+      osc.stop(ctx.currentTime  + start + 0.3);
+    });
   } catch {}
 }
 
 function showAlarmBanner(title, sub) {
-  const banner = document.getElementById('alarmBanner');
   document.getElementById('alarmBannerTitle').textContent = title;
-  document.getElementById('alarmBannerSub').textContent = sub;
-  banner.classList.add('show');
+  document.getElementById('alarmBannerSub').textContent   = sub;
+  document.getElementById('alarmBanner').classList.add('show');
 }
 
 function closeAlarmBanner() {
@@ -525,6 +624,7 @@ function closeAlarmBanner() {
 }
 
 function scheduleSnooze() {
+  closeAlarmBanner();
   if (snoozeTimeout) clearTimeout(snoozeTimeout);
   showToast('⏰ 5분 후에 다시 알려드릴게요', '');
   snoozeTimeout = setTimeout(() => {
@@ -540,7 +640,6 @@ function requestNotifPermission() {
     return;
   }
   Notification.requestPermission().then(p => {
-    notifPermission = p;
     if (p === 'granted') showToast('✅ 알림을 허용했어요!', 'green');
     else showToast('알림을 허용하지 않았어요', 'red');
     renderTodayTab();
@@ -550,7 +649,7 @@ function requestNotifPermission() {
 // ==================== 탭 전환 ====================
 function switchTab(tabName) {
   document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(el  => el.classList.remove('active'));
   document.getElementById(`tab_${tabName}`).classList.add('active');
   document.getElementById(`content_${tabName}`).classList.add('active');
 }
@@ -559,15 +658,16 @@ function switchTab(tabName) {
 function showToast(msg, type) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
-  toast.className = `toast ${type} show`;
-  setTimeout(() => { toast.classList.remove('show'); }, 2500);
+  toast.className   = `toast ${type} show`;
+  setTimeout(() => toast.classList.remove('show'), 2500);
 }
 
 function escHtml(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// 모달 외부 클릭 닫기
 document.getElementById('modalOverlay')?.addEventListener('click', e => {
   if (e.target === e.currentTarget) closeModal();
 });

@@ -1,0 +1,12 @@
+{
+  "name": "aboji-alarm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "아버지 약 알람 스케줄러",
+  "scripts": {
+    "alarm": "node alarm.js"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  }
+}
