@@ -36,11 +36,15 @@ try {
   process.exit(1);
 }
 
-const { subscription, medications } = schedule;
-if (!subscription || !medications || medications.length === 0) {
+const { subscriptions, medications } = schedule;
+// 하위 호환: 기존 단일 subscription 형식도 지원
+const subList = subscriptions || (schedule.subscription ? [schedule.subscription] : []);
+
+if (subList.length === 0 || !medications || medications.length === 0) {
   console.log('ℹ️  구독 정보 또는 약 목록이 없습니다.');
   process.exit(0);
 }
+console.log(`📱 등록된 기기 수: ${subList.length}`);
 
 // ── 현재 KST 시각 ────────────────────────────────────────
 // GitHub Actions 는 UTC 기준 → KST = UTC + 9
@@ -76,7 +80,7 @@ if (dueMeds.length === 0) {
 const bodyText = dueMeds.join(', ') + ' 드실 시간이에요!';
 console.log(`💊 알람 전송: ${bodyText}`);
 
-// ── Web Push 전송 ─────────────────────────────────────────
+// ── 모든 기기에 Web Push 전송 ────────────────────────────
 const payload = JSON.stringify({
   title: '💊 약 드실 시간이에요!',
   body:  bodyText,
@@ -88,15 +92,19 @@ const payload = JSON.stringify({
   data:  { url: 'https://yamugyclaude.github.io/father/' }
 });
 
-webpush.sendNotification(subscription, payload, { TTL: 3600 })
-  .then(() => {
-    console.log('✅ 알림 전송 성공!');
-  })
-  .catch(err => {
-    console.error('❌ 알림 전송 실패:', err.statusCode, err.body);
-    // 구독이 만료된 경우 (410 Gone) — 정상적인 상황
-    if (err.statusCode === 410) {
-      console.log('ℹ️  구독이 만료되었습니다. 앱을 다시 열어 알림을 재설정해 주세요.');
-    }
-    process.exit(1);
-  });
+const results = await Promise.allSettled(
+  subList.map((sub, i) =>
+    webpush.sendNotification(sub, payload, { TTL: 3600 })
+      .then(() => console.log(`✅ 기기 ${i+1} 전송 성공`))
+      .catch(err => {
+        if (err.statusCode === 410) {
+          console.log(`ℹ️  기기 ${i+1} 구독 만료 (앱 재설정 필요)`);
+        } else {
+          console.error(`❌ 기기 ${i+1} 전송 실패:`, err.statusCode, err.body);
+        }
+      })
+  )
+);
+
+const failed = results.filter(r => r.status === 'rejected').length;
+if (failed > 0) process.exit(1);

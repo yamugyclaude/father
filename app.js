@@ -110,22 +110,35 @@ async function syncToGitHub() {
   if (!token) return false;
 
   const sub = window._pushSubscription;
-  const payload = JSON.stringify({
-    subscription: sub ? sub.toJSON() : null,
-    medications:  medications
-  }, null, 2);
 
   try {
-    // 현재 파일 SHA 조회 (업데이트에 필요)
+    // 현재 파일 읽기 (SHA + 기존 구독 목록)
     const getRes = await fetch(
       `https://api.github.com/repos/${GITHUB_REPO}/contents/${SCHEDULE_PATH}`,
       { headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' } }
     );
     let sha = undefined;
+    let existingSubs = [];
     if (getRes.ok) {
       const data = await getRes.json();
       sha = data.sha;
+      try {
+        const existing = JSON.parse(atob(data.content.replace(/\n/g, '')));
+        existingSubs = existing.subscriptions || (existing.subscription ? [existing.subscription] : []);
+      } catch {}
     }
+
+    // 현재 구독을 목록에 추가 (중복 endpoint 제거)
+    const currentSub = sub ? sub.toJSON() : null;
+    if (currentSub) {
+      existingSubs = existingSubs.filter(s => s.endpoint !== currentSub.endpoint);
+      existingSubs.push(currentSub);
+    }
+
+    const payload = JSON.stringify({
+      subscriptions: existingSubs,
+      medications:   medications
+    }, null, 2);
 
     // 파일 업데이트(또는 생성)
     const body = {
