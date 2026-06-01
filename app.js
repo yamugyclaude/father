@@ -18,7 +18,13 @@ let editingId = null;
 let deleteTargetId = null;
 let alarmCheckInterval = null;
 let snoozeTimeout = null;
-let notifPermission = Notification.permission;
+
+// Notification API가 없는 브라우저 대비 안전 처리
+function getNotifPermission() {
+  try { return (typeof Notification !== 'undefined') ? Notification.permission : 'denied'; }
+  catch (e) { return 'denied'; }
+}
+let notifPermission = getNotifPermission();
 
 // ==================== 초기화 ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -126,7 +132,7 @@ function renderTodayTab() {
 
   // 알림 권한 배너
   let notifHtml = '';
-  if (Notification.permission === 'default') {
+  if (getNotifPermission() === 'default') {
     notifHtml = `
       <div class="notif-banner">
         <div class="notif-banner-text">🔔 알람을 받으려면 알림 허용이 필요해요</div>
@@ -444,7 +450,7 @@ function triggerAlarm(medName, timeLabel) {
   playAlarmSound();
 
   // 시스템 알림
-  if (Notification.permission === 'granted') {
+  if (getNotifPermission() === 'granted') {
     const notif = new Notification('💊 약 드실 시간이에요!', {
       body: `${timeLabel} — ${medName}`,
       icon: './icon-192.png',
@@ -506,6 +512,10 @@ function scheduleSnooze() {
 
 // ==================== 알림 권한 ====================
 function requestNotifPermission() {
+  if (typeof Notification === 'undefined') {
+    showToast('이 브라우저는 알림을 지원하지 않아요', 'red');
+    return;
+  }
   Notification.requestPermission().then(p => {
     notifPermission = p;
     if (p === 'granted') showToast('✅ 알림을 허용했어요!', 'green');
