@@ -1,0 +1,17 @@
+{
+  "name": "아버지 약 관리",
+  "short_name": "약 관리",
+  "description": "매일 약 복용을 도와드리는 앱",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2e7d32",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><rect width='192' height='192' rx='32' fill='%232e7d32'/><text y='130' x='96' text-anchor='middle' font-size='120'>💊</text></svg>",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}

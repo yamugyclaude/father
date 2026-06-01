@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="약 관리">
+  <meta name="theme-color" content="#2e7d32">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+  <title>아버지 약 관리</title>
+</head>
+<body>
+
+  <!-- ===== 상단 알람 배너 ===== -->
+  <div class="alarm-banner" id="alarmBanner">
+    <div class="alarm-banner-text">
+      <div class="alarm-banner-title" id="alarmBannerTitle">💊 약 드실 시간이에요!</div>
+      <div class="alarm-banner-sub" id="alarmBannerSub"></div>
+    </div>
+    <button class="alarm-banner-close" onclick="scheduleSnooze()">⏰ 5분 후</button>
+    <button class="alarm-banner-close" onclick="closeAlarmBanner()">닫기</button>
+  </div>
+
+  <!-- ===== 헤더 ===== -->
+  <header class="header">
+    <div class="header-title">💊 아버지 약 관리</div>
+    <div class="header-date" id="headerDate"></div>
+  </header>
+
+  <!-- ===== 탭 ===== -->
+  <nav class="tabs">
+    <button class="tab-btn active" id="tab_today" onclick="switchTab('today')">
+      📋 오늘 약
+    </button>
+    <button class="tab-btn" id="tab_settings" onclick="switchTab('settings')">
+      ⚙️ 약 설정
+    </button>
+    <button class="tab-btn" id="tab_records" onclick="switchTab('records')">
+      📊 복용 기록
+    </button>
+  </nav>
+
+  <!-- ===== 오늘 약 탭 ===== -->
+  <section class="tab-content active" id="content_today">
+    <div id="todayContainer"></div>
+  </section>
+
+  <!-- ===== 약 설정 탭 ===== -->
+  <section class="tab-content" id="content_settings">
+    <div class="settings-header">
+      <div class="settings-title">등록된 약 목록</div>
+      <button class="add-btn" onclick="openAddModal()">➕ 약 추가</button>
+    </div>
+    <div id="settingsContainer"></div>
+  </section>
+
+  <!-- ===== 복용 기록 탭 ===== -->
+  <section class="tab-content" id="content_records">
+    <div id="recordsContainer"></div>
+  </section>
+
+  <!-- ===== 약 추가/수정 모달 ===== -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-title" id="modalTitle">➕ 새 약 추가</div>
+
+      <div class="form-group">
+        <label class="form-label" for="medName">약 이름 *</label>
+        <input class="form-input" type="text" id="medName" placeholder="예: 혈압약, 당뇨약" maxlength="30">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">복용 시간대 * (여러 개 선택 가능)</label>
+
+        <!-- 아침 -->
+        <label style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #eee;cursor:pointer;">
+          <input type="checkbox" id="cb_morning" onchange="onTimeCheck('morning')"
+                 style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
+          <span style="font-size:1.05rem;">☀️ 아침</span>
+        </label>
+        <div class="form-row" id="alarmRow_morning" style="display:none;padding:8px 0 4px 32px;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:0.9rem;">알람 시각</label>
+            <input class="form-input" type="time" id="alarm_morning" value="08:00">
+          </div>
+        </div>
+
+        <!-- 점심 -->
+        <label style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #eee;cursor:pointer;">
+          <input type="checkbox" id="cb_lunch" onchange="onTimeCheck('lunch')"
+                 style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
+          <span style="font-size:1.05rem;">🌤️ 점심</span>
+        </label>
+        <div class="form-row" id="alarmRow_lunch" style="display:none;padding:8px 0 4px 32px;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:0.9rem;">알람 시각</label>
+            <input class="form-input" type="time" id="alarm_lunch" value="12:00">
+          </div>
+        </div>
+
+        <!-- 저녁 -->
+        <label style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid #eee;cursor:pointer;">
+          <input type="checkbox" id="cb_dinner" onchange="onTimeCheck('dinner')"
+                 style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
+          <span style="font-size:1.05rem;">🌙 저녁</span>
+        </label>
+        <div class="form-row" id="alarmRow_dinner" style="display:none;padding:8px 0 4px 32px;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:0.9rem;">알람 시각</label>
+            <input class="form-input" type="time" id="alarm_dinner" value="18:00">
+          </div>
+        </div>
+
+        <!-- 취침 전 -->
+        <label style="display:flex;align-items:center;gap:10px;padding:12px 0;cursor:pointer;">
+          <input type="checkbox" id="cb_sleep" onchange="onTimeCheck('sleep')"
+                 style="width:22px;height:22px;accent-color:#2e7d32;cursor:pointer;">
+          <span style="font-size:1.05rem;">😴 취침 전</span>
+        </label>
+        <div class="form-row" id="alarmRow_sleep" style="display:none;padding:8px 0 4px 32px;">
+          <div class="form-group" style="margin-bottom:0;">
+            <label class="form-label" style="font-size:0.9rem;">알람 시각</label>
+            <input class="form-input" type="time" id="alarm_sleep" value="21:00">
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="medMemo">메모 (선택)</label>
+        <input class="form-input" type="text" id="medMemo" placeholder="예: 밥 먹고 30분 후" maxlength="50">
+      </div>
+
+      <div class="modal-btns">
+        <button class="btn-cancel" onclick="closeModal()">취소</button>
+        <button class="btn-save" onclick="saveMed()">💾 저장하기</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 삭제 확인 모달 ===== -->
+  <div class="confirm-modal" id="confirmModal">
+    <div class="confirm-box">
+      <div class="confirm-icon">🗑️</div>
+      <div class="confirm-title">정말 삭제할까요?</div>
+      <div class="confirm-sub"><strong id="confirmMedName"></strong> 약을 삭제하면<br>복용 기록도 함께 지워져요.</div>
+      <div class="confirm-btns">
+        <button class="confirm-no" onclick="closeConfirm()">아니요</button>
+        <button class="confirm-yes" onclick="doDelete()">네, 삭제해요</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 토스트 ===== -->
+  <div class="toast" id="toast"></div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
