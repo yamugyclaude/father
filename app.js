@@ -2,6 +2,9 @@
 // medication: { id, name, times: ['morning'|'lunch'|'dinner'|'sleep'], alarmTime: 'HH:MM', memo, active }
 // record: { date: 'YYYY-MM-DD', entries: { medId_time: { taken: bool, takenAt: 'HH:MM' } } }
 
+// ★ Cloudflare Worker URL을 여기에 입력하세요 (배포 후)
+const WORKER_URL = 'YOUR_CLOUDFLARE_WORKER_URL';
+
 const TIME_LABELS = {
   morning: { label: '아침', icon: '☀️', defaultTime: '08:00' },
   lunch:   { label: '점심', icon: '🌤️', defaultTime: '12:00' },
@@ -81,6 +84,24 @@ function saveData() {
   localStorage.setItem('aboji_meds', JSON.stringify(medications));
   localStorage.setItem('aboji_records', JSON.stringify(records));
 }
+
+// ==================== 서버 동기화 (Cloudflare Worker) ====================
+async function syncScheduleToServer(playerId) {
+  if (!playerId) return;
+  if (WORKER_URL === 'YOUR_CLOUDFLARE_WORKER_URL') return; // 미설정 시 건너뜀
+  try {
+    await fetch(`${WORKER_URL}/schedule`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ playerId, medications })
+    });
+    console.log('[동기화] 약 스케줄 서버 전송 완료');
+  } catch (e) {
+    console.warn('[동기화 실패]', e.message);
+  }
+}
+// index.html 의 OneSignal 콜백에서 호출 가능하도록 전역 노출
+window.syncScheduleToServer = syncScheduleToServer;
 
 function loadData() {
   try {
@@ -388,6 +409,7 @@ function saveMed() {
   }
 
   saveData();
+  if (window._oneSignalPlayerId) syncScheduleToServer(window._oneSignalPlayerId);
   closeModal();
   renderAll();
 }
@@ -410,6 +432,7 @@ function doDelete() {
   if (!deleteTargetId) return;
   medications = medications.filter(m => m.id !== deleteTargetId);
   saveData();
+  if (window._oneSignalPlayerId) syncScheduleToServer(window._oneSignalPlayerId);
   closeConfirm();
   renderAll();
   showToast('🗑️ 삭제했어요', 'red');

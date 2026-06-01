@@ -12,6 +12,51 @@
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./style.css">
   <title>아버지 약 관리</title>
+
+  <!-- OneSignal 푸시 알림 SDK -->
+  <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
+  <script>
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+    OneSignalDeferred.push(async function(OneSignal) {
+      // ★ OneSignal App ID를 여기에 입력하세요
+      const ONESIGNAL_APP_ID = 'YOUR_ONESIGNAL_APP_ID';
+      if (ONESIGNAL_APP_ID === 'YOUR_ONESIGNAL_APP_ID') return; // 미설정 시 건너뜀
+
+      await OneSignal.init({
+        appId: ONESIGNAL_APP_ID,
+        serviceWorkerPath: 'OneSignalSDKWorker.js',
+        serviceWorkerParam: { scope: './' },
+        notifyButton: { enable: false },
+        welcomeNotification: {
+          title: '💊 아버지 약 관리',
+          message: '약 알림이 설정되었어요!'
+        }
+      });
+
+      // 알림 권한 요청 (앱 첫 실행 시)
+      const permission = await OneSignal.Notifications.permission;
+      if (!permission) {
+        await OneSignal.Notifications.requestPermission();
+      }
+
+      // Player ID 저장 → app.js 에서 사용
+      const playerId = await OneSignal.User.PushSubscription.id;
+      if (playerId) {
+        window._oneSignalPlayerId = playerId;
+        // 기존에 저장된 약 스케줄을 서버에 동기화
+        if (window.syncScheduleToServer) window.syncScheduleToServer(playerId);
+      }
+
+      // 구독 상태 변경 감지
+      OneSignal.User.PushSubscription.addEventListener('change', async (e) => {
+        const id = e.current?.id;
+        if (id) {
+          window._oneSignalPlayerId = id;
+          if (window.syncScheduleToServer) window.syncScheduleToServer(id);
+        }
+      });
+    });
+  </script>
 </head>
 <body>
 
