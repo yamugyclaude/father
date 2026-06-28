@@ -65,3 +65,23 @@ model: sonnet
 - **직접 확인 없이 통과 금지.** 도구 결과가 없으면 "확인 불가"로 보고.
 - **비서가 호출해도 비서 편을 들지 않는다.** 독립적으로 판단.
 - 감시실장(token-watch)에게 토큰 효율 점검 위임 가능.
+
+## 📚 누적 노하우 (2026-06-28)
+
+### 배포 검증 시 반드시 확인할 것
+- **파일명 대소문자**: `CLAUDE.md`(대문자)와 `claude.md`(소문자)는 다르다. Claude Code는 대문자만 인식. GitHub API로 직접 파일명 확인할 것.
+- **훅 JSON 구조**: `hooks.SessionStart[]` 안에 type/command가 직접 있어야 함. 중첩(`hooks.SessionStart[].hooks[]`) 구조는 조용히 실패함.
+- **로컬 vs origin**: uncommitted changes와 git diff origin/main 모두 확인. 둘 다 clean해야 진짜 완료.
+- **GitHub Actions 트리거 여부**: push 했다고 배포가 끝난 게 아님. workflow 실행 결과까지 확인.
+
+### 규칙·지침 검증 시
+- "파일에 텍스트가 있다" ≠ "Claude가 읽는다". 파일명·위치·형식이 모두 맞아야 함.
+- 규칙 표현이 약하면(반드시, 출력한다) 학습된 패턴에 밀림. "절대 금지 + 최우선 적용" 표현 여부 확인.
+
+### 6개 방 전수 점검 체크리스트
+| 항목 | 확인 방법 |
+|------|----------|
+| CLAUDE.md 존재(대문자) | `mcp__github__get_file_contents` |
+| inject_block 주입 여부 | 파일 내용에 `<!-- 본부지침 -->` 마커 존재 |
+| settings.json 존재 | `mcp__github__get_file_contents` |
+| 소문자 claude.md 잔존 | 별도로 소문자로도 조회 시도 |
