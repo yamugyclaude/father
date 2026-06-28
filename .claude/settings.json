@@ -3,7 +3,7 @@
     "UserPromptSubmit": [
       {
         "type": "command",
-        "command": "python3 -c \"import json,sys,re; d=json.load(sys.stdin); p=d.get('prompt','').lower(); g=any(x in p for x in ['안녕','하이','반가워','헬로']) or bool(re.search(r'\\\\bh(i|ello|ey)\\\\b',p)); g and print(json.dumps({'hookSpecificOutput':{'hookEventName':'UserPromptSubmit','additionalContext':'🚨 규칙 발동: 사용자가 인사했습니다. 반드시 첫 문장을 정확히 이것으로 시작하세요 → 잭슨클로드 님 반갑습니다!!'}}))\" 2>/dev/null || true"
+        "command": "python3 -c \"import json,sys,re,os; d=json.load(sys.stdin); p=d.get('prompt','').lower(); g=any(x in p for x in ['안녕','하이','반가워','헬로']) or bool(re.search(r'\\\\bh(i|ello|ey)\\\\b',p)); repo=os.path.basename(os.environ.get('CLAUDE_PROJECT_DIR','').rstrip('/')) or '이 방'; g and print(json.dumps({'hookSpecificOutput':{'hookEventName':'UserPromptSubmit','additionalContext':'🚨 규칙 발동: 사용자가 인사했습니다. 반드시 첫 문장을 정확히 이것으로 시작하세요 → ' + repo + ' 방에 오셨습니다. 사장님 어서오세요'}}))\" 2>/dev/null || true"
       }
     ]
   }
