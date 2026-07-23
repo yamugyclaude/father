@@ -34,8 +34,8 @@ model: sonnet
 
 ### 4. 부서 배정 제안
 - 각 step을 누가 할지 제안:
-  - 🔍 정보비서(research-scout) — 조사 필요할 때
-  - 🛠️ 실행비서(builder) — 코딩
+  - 🔍 정보실장(research-scout) — 조사 필요할 때
+  - 🛠️ 실행실장(builder) — 코딩
   - 사용자 직접 — 권한·계정·결제 등
 
 ## 출력 형식
